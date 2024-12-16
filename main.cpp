@@ -1,11 +1,3 @@
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <cstdint>
-#include <string>
-#include <iomanip>
-#include <stdexcept>
-
 /*
  *
  *   __  __ _____  _  _ ___      _
@@ -29,19 +21,34 @@
  *
  *  This program is licensed under the MIT License.
  *  (c) José Rodrigues 2024
- *
  */
+
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <cstdint>
+#include <string>
+#include <iomanip>
+#include <stdexcept>
 
 using namespace std;
 
+#define VERSION 0.1
 bool DEBUG, XMLonly;
+string video_path;
 
-string convert_timestamp_to_date(uint32_t timestamp) {
-    time_t raw_time = timestamp - 2082844800; // Adjust for Mac timestamp
+#define INFO_ICON "(i) "
+#define WARNING_ICON "(!) "
+#define ACTION_ICON "> "
+#define OK_ICON " (OK)"
+
+string convert_timestamp_to_date(uint32_t timestamp, bool break_line = false) {
+    time_t raw_time = timestamp; // Adjust for Mac timestamp
     struct tm *time_info;
     char buffer[80];
     time_info = gmtime(&raw_time);
-    strftime(buffer, sizeof(buffer), "%d-%m-%Y %H:%M:%S", time_info);
+
+    strftime(buffer, sizeof(buffer), break_line ? "%d-%m-%Y\n%H:%M:%S" : "%d-%m-%Y %H:%M:%S", time_info);
     return string(buffer);
 }
 
@@ -88,7 +95,7 @@ void parse_meta(vector<char> &data) {
 
         if (box_type == "xml ") {
             if (!XMLonly) {
-                cout << "This file contains additional data in XML." << endl;
+                cout << WARNING_ICON << "This file contains additional data in XML." << endl;
             } else {
                 vector<char> xml_data(data.begin() + meta_pos + 12, data.begin() + meta_pos + box_size - 1);
                 string xmlSTR = string(xml_data.begin(), xml_data.end());
@@ -101,6 +108,66 @@ void parse_meta(vector<char> &data) {
         // Move to the next box
         meta_pos += box_size;
     }
+}
+
+/**
+ * @brief Format seconds as an SRT-compatible timestamp.
+ * @param total_seconds The total number of seconds.
+ * @return A formatted string "HH:MM:SS,000" (SRT requires milliseconds, so we add ,000)
+ */
+string format_seconds(int total_seconds) {
+    int hours = total_seconds / 3600;
+    int minutes = (total_seconds % 3600) / 60;
+    int seconds = total_seconds % 60;
+    char buffer[12];
+    snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d,000", hours, minutes, seconds);
+    return string(buffer);
+}
+
+/**
+ * @brief Write the list of dates as subtitles to an SRT file.
+ * @param file_path The original video file path.
+ * @param dates_list A vector of date strings, each in the format "dd/mm/yyyy hh:mm:ss".
+ */
+void write_dates_to_srt( const vector<string>& dates_list) {
+    // Replace .mp4 or .MP4 with .srt
+    string srt_file_path = video_path;
+    size_t pos = srt_file_path.rfind(".mp4");
+    if (pos == string::npos) {
+        pos = srt_file_path.rfind(".MP4");
+    }
+    if (pos != string::npos) {
+        srt_file_path.replace(pos, 4, ".srt");
+    }
+
+    cout << ACTION_ICON << "Writing timecodes to SRT file: " << srt_file_path;
+
+    ofstream srt_file(srt_file_path);
+    if (!srt_file.is_open()) {
+        cerr << "Failed to open SRT file for writing: " << srt_file_path << endl;
+        return;
+    }
+
+    int previous_time = 0;
+    for (size_t i = 0; i < dates_list.size(); ++i) {
+        const string& date = dates_list[i];
+
+        // Write the subtitle index
+        srt_file << (i + 1) << "\n";
+
+        // Write the time range
+        srt_file << format_seconds(previous_time) << " --> "
+                 << format_seconds(previous_time + 1) << "\n";
+
+        // Write the date and time
+        srt_file << date << "\n\n";
+
+        // Update the previous time
+        previous_time += 1;  // Increment by 1 second
+    }
+
+    srt_file.close();
+    cout << OK_ICON << endl;
 }
 
 uint64_t read_box(ifstream &file, uint64_t current_pos) {
@@ -163,20 +230,27 @@ uint64_t read_box(ifstream &file, uint64_t current_pos) {
 
             if (type == "ftyp") {
                 string major_brand(data.begin(), data.begin() + 4);
-                cout << "MP4 Major Brand: " << major_brand << "\n";
+                cout << INFO_ICON << "MP4 Major Brand: " << major_brand << "\n";
             } else if (type == "moov") {
                 // Parse the moov box
                 read_box(file, current_pos + 8);
             } else if (type == "mvhd") {
                 // Extracting data fields
-                uint64_t creation_time_raw = read_uint64_from_bytes(data, 4);
-                cout << "First timestamp: " << convert_timestamp_to_date(creation_time_raw) << endl;
+                uint64_t creation_time_raw = read_uint64_from_bytes(data, 4) - 2082844800;
+                cout << INFO_ICON << "First timestamp: " << convert_timestamp_to_date(creation_time_raw) << endl;
 
                 uint64_t time_scale = read_uint64_from_bytes(data, 12);
                 uint64_t duration = read_uint64_from_bytes(data, 16);
-                float duration_seconds = static_cast<float>(duration) / static_cast<float>(time_scale);
+                int duration_seconds = round(static_cast<double>(duration) / static_cast<double>(time_scale));
 
-                cout << "File duration: " << duration_seconds << " seconds" << endl;
+                cout << INFO_ICON << "File duration: " << duration_seconds << " seconds" << endl;
+
+                vector<string> timecode;
+                for (int i = 0; i < duration_seconds; ++i) {
+                    timecode.push_back(convert_timestamp_to_date(creation_time_raw + i, true));
+                }
+
+                write_dates_to_srt(timecode);
             } else if (type == "meta") {
                 parse_meta(data);
             }
@@ -189,6 +263,8 @@ uint64_t read_box(ifstream &file, uint64_t current_pos) {
 
 void parse_mp4_atoms(ifstream &file) {
     uint64_t current_pos = 0;
+
+    cout << OK_ICON << endl;
 
     while (true) {
         try {
@@ -209,7 +285,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    string video_path = argv[1];
+    video_path = argv[1];
     if (video_path.substr(video_path.find_last_of('.') + 1) != "mp4" &&
         video_path.substr(video_path.find_last_of('.') + 1) != "MP4") {
         cerr << "Please provide a valid MP4 video file path." << endl;
@@ -232,12 +308,20 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (!XMLonly)
-        cout << "Reading video file: " << video_path << endl;
+    if (!XMLonly) {
+        cout << "  __  __ _____  _  _ ___      _    " << endl;
+        cout << R"( |  \/  |  __ \| || |__ \    | |  v)" << VERSION << endl;
+        cout << " | \\  / | |__) | || |_ ) |___| |_ _ __ " << endl;
+        cout << " | |\\/| |  ___/|__   _/ // __| __| '__|" << endl;
+        cout << " | |  | | |       | |/ /_\\__ \\ |_| |   " << endl;
+        cout << " |_|  |_|_|       |_|____|___/\\__|_|   " << endl;
+        cout << endl;
+        cout << ACTION_ICON << "Reading video file: " << video_path;
+    }
     parse_mp4_atoms(file);
     file.close();
 
     if (!XMLonly)
-        cout << "Finished reading " << video_path << endl;
+        cout << ACTION_ICON << "Finished reading " << video_path << endl;
     return 0;
 }
