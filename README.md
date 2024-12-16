@@ -1,5 +1,5 @@
 # mp42str ![Build Status](https://github.com/joserodpt/mp42str/actions/workflows/cmake-multi-platform.yml/badge.svg)
-[Download Latest Artifacts](https://github.com/joserodpt/mp42str/actions)
+[Download Latest Builds](https://github.com/joserodpt/mp42str/actions)
 
 ## Project Overview
 
@@ -12,6 +12,7 @@ More specifically, the program reads the following atoms/boxes:
 
 More info on what each atom/box contains can be found in the [mp4atoms.pdf](readings/mp4atoms.pdf) and [mep4metaAtom.pdf](readings/mp4metaAtom.pdf).
 
+This repo is based on the original [dv2str](github.com/joserodpt/dv2srt) project for DV video.
 ## Generated .srt file example
 ```
 1
