@@ -30,6 +30,8 @@
 #include <string>
 #include <iomanip>
 #include <stdexcept>
+#include <algorithm>
+#include <cmath>
 
 using namespace std;
 
