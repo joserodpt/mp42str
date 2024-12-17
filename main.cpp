@@ -37,7 +37,6 @@ using namespace std;
 
 #define VERSION 0.1
 bool DEBUG, XMLonly;
-string video_path;
 
 #define INFO_ICON "(i) "
 #define WARNING_ICON "(!) "
@@ -131,9 +130,9 @@ string format_seconds(int total_seconds) {
  * @param file_path The original video file path.
  * @param dates_list A vector of date strings, each in the format "dd/mm/yyyy hh:mm:ss".
  */
-void write_dates_to_srt( const vector<string>& dates_list) {
+void write_dates_to_srt( const vector<string>& dates_list, const string &file_path) {
     // Replace .mp4 or .MP4 with .srt
-    string srt_file_path = video_path;
+    string srt_file_path = file_path;
     size_t pos = srt_file_path.rfind(".mp4");
     if (pos == string::npos) {
         pos = srt_file_path.rfind(".MP4");
@@ -172,7 +171,7 @@ void write_dates_to_srt( const vector<string>& dates_list) {
     cout << OK_ICON << endl;
 }
 
-uint64_t read_box(ifstream &file, uint64_t current_pos) {
+uint64_t read_box(ifstream &file, uint64_t current_pos, const string &file_path) {
     file.seekg(current_pos);
     char header[8];
     file.read(header, 8); // Read the 8-byte header (4 bytes size + 4 bytes type)
@@ -235,7 +234,7 @@ uint64_t read_box(ifstream &file, uint64_t current_pos) {
                 cout << INFO_ICON << "MP4 Major Brand: " << major_brand << "\n";
             } else if (type == "moov") {
                 // Parse the moov box
-                read_box(file, current_pos + 8);
+                read_box(file, current_pos + 8, file_path);
             } else if (type == "mvhd") {
                 // Extracting data fields
                 uint64_t creation_time_raw = read_uint64_from_bytes(data, 4) - 2082844800;
@@ -252,7 +251,7 @@ uint64_t read_box(ifstream &file, uint64_t current_pos) {
                     timecode.push_back(convert_timestamp_to_date(creation_time_raw + i, true));
                 }
 
-                write_dates_to_srt(timecode);
+                write_dates_to_srt(timecode, file_path);
             } else if (type == "meta") {
                 parse_meta(data);
             }
@@ -263,14 +262,33 @@ uint64_t read_box(ifstream &file, uint64_t current_pos) {
     return boxSize;
 }
 
-void parse_mp4_atoms(ifstream &file) {
+void read_file(const string &file_path) {
+    if (file_path.substr(file_path.find_last_of('.') + 1) != "mp4" &&
+            file_path.substr(file_path.find_last_of('.') + 1) != "MP4") {
+        cerr << "Please provide a valid MP4 video file path." << endl;
+        return;
+    }
+
+    if (!XMLonly)
+        cout << ACTION_ICON << "Reading " << file_path;
+
+    ifstream file(file_path, ios::binary);
+    if (!file.is_open()) {
+        cerr << "Failed to open file: " << file_path << endl;
+        return;
+    }
+    if (!file.good()) {
+        cerr << "File not found: " << file_path << endl;
+        return;
+    }
+
+    if (!XMLonly)
+        cout << OK_ICON << endl;
+
     uint64_t current_pos = 0;
-
-    cout << OK_ICON << endl;
-
     while (true) {
         try {
-            uint64_t box_size = read_box(file, current_pos);
+            uint64_t box_size = read_box(file, current_pos, file_path);
             if (box_size == -1) {
                 break;
             }
@@ -279,20 +297,19 @@ void parse_mp4_atoms(ifstream &file) {
             break;
         }
     }
+    file.close();
+
+    if (!XMLonly)
+        cout << ACTION_ICON << "Finished reading " << file_path << endl;
 }
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        cerr << "mp42str <video_file_path> <options: -xml, -debug>" << endl;
+        cerr << "mp42str <file/folder> <options: -xml, -debug>" << endl;
         return 1;
     }
 
-    video_path = argv[1];
-    if (video_path.substr(video_path.find_last_of('.') + 1) != "mp4" &&
-        video_path.substr(video_path.find_last_of('.') + 1) != "MP4") {
-        cerr << "Please provide a valid MP4 video file path." << endl;
-        return 1;
-    }
+    string path = argv[1];
 
     if (argc == 3) {
         string option = argv[2];
@@ -304,12 +321,6 @@ int main(int argc, char *argv[]) {
     }
 
 
-    ifstream file(video_path, ios::binary);
-    if (!file.is_open()) {
-        cerr << "Failed to open file: " << video_path << endl;
-        return 1;
-    }
-
     if (!XMLonly) {
         cout << "  __  __ _____  _  _ ___      _    " << endl;
         cout << R"( |  \/  |  __ \| || |__ \    | |  v)" << VERSION << endl;
@@ -318,12 +329,22 @@ int main(int argc, char *argv[]) {
         cout << " | |  | | |       | |/ /_\\__ \\ |_| |   " << endl;
         cout << " |_|  |_|_|       |_|____|___/\\__|_|   " << endl;
         cout << endl;
-        cout << ACTION_ICON << "Reading video file: " << video_path;
     }
-    parse_mp4_atoms(file);
-    file.close();
 
-    if (!XMLonly)
-        cout << ACTION_ICON << "Finished reading " << video_path << endl;
+    //check if video_path is a folder
+    if (filesystem::exists(path)) {
+        if (filesystem::is_directory(path)) {
+            for (const auto &entry : filesystem::directory_iterator(path)) {
+                if (entry.path().extension() == ".mp4" || entry.path().extension() == ".MP4") {
+                    read_file(entry.path().string());
+                }
+            }
+        } else {
+            read_file(path);
+        }
+    } else {
+        std::cout << path << " does not exist.\n";
+    }
+
     return 0;
 }
